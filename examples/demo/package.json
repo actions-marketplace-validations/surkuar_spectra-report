@@ -1,0 +1,8 @@
+{
+  "name": "spectra-demo",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test": "playwright test"
+  }
+}

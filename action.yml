@@ -1,0 +1,248 @@
+name: 'Spectra Report'
+description: 'AI-assisted Playwright test report: failure groups with root-cause hints, published to GitHub Pages with a sticky PR comment.'
+author: 'Suresh Babu (surkuar)'
+branding:
+  icon: 'activity'
+  color: 'purple'
+
+inputs:
+  results-dir:
+    description: 'Folder(s) written by the Spectra Playwright reporter. Separate several (shards) with spaces or new lines.'
+    default: 'spectra-results'
+  junit:
+    description: 'Optional JUnit XML file(s) to import (any framework). Separate with spaces or new lines.'
+    default: ''
+  report-dir:
+    description: 'Where to build the static report on the runner.'
+    default: 'spectra-report'
+  run-name:
+    description: 'Optional name shown in the report header.'
+    default: ''
+  publish:
+    description: 'Publish the report to GitHub Pages (gh-pages branch).'
+    default: 'true'
+  pages-branch:
+    description: 'Branch that GitHub Pages serves.'
+    default: 'gh-pages'
+  pages-url:
+    description: 'Base URL of your Pages site. Default: https://<owner>.github.io/<repo>'
+    default: ''
+  keep-runs:
+    description: 'How many run folders to keep per branch on gh-pages.'
+    default: '20'
+  comment-on-pr:
+    description: 'Create or update one summary comment on the pull request.'
+    default: 'true'
+  job-summary:
+    description: 'Write the summary to the Actions run page.'
+    default: 'true'
+  github-token:
+    description: 'Token used to push to gh-pages and comment. Needs contents: write and pull-requests: write.'
+    default: ${{ github.token }}
+  anthropic-api-key:
+    description: 'Enables AI hints with Anthropic (recommended). Pass a secret.'
+    default: ''
+  openai-api-key:
+    description: 'Enables AI hints with OpenAI or any OpenAI-compatible API. Pass a secret.'
+    default: ''
+  ai-provider:
+    description: 'anthropic or openai. Default: whichever key is set.'
+    default: ''
+  ai-model:
+    description: 'Model name. Default: claude-haiku-5-5 (Anthropic) or gpt-4.1-mini (OpenAI).'
+    default: ''
+  ai-base-url:
+    description: 'Custom endpoint, e.g. Azure OpenAI or a self-hosted Ollama (OpenAI-compatible).'
+    default: ''
+  ai-max-groups:
+    description: 'Maximum AI calls per run (one per new failure group).'
+    default: '10'
+  fail-on-failure:
+    description: 'Fail this step when any test failed.'
+    default: 'false'
+
+outputs:
+  report-url:
+    description: 'URL of the published report for this run.'
+    value: ${{ steps.meta.outputs.report-url }}
+  total:
+    value: ${{ steps.generate.outputs.total }}
+    description: 'Total tests.'
+  passed:
+    value: ${{ steps.generate.outputs.passed }}
+    description: 'Passed tests.'
+  failed:
+    value: ${{ steps.generate.outputs.failed }}
+    description: 'Failed tests.'
+  flaky:
+    value: ${{ steps.generate.outputs.flaky }}
+    description: 'Flaky tests (passed on retry).'
+  pass-rate:
+    value: ${{ steps.generate.outputs.pass-rate }}
+    description: 'Pass rate in percent.'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Compute paths and URLs
+      id: meta
+      shell: bash
+      env:
+        HEAD_REF: ${{ github.head_ref }}
+        REF_NAME: ${{ github.ref_name }}
+        BASE_REF: ${{ github.base_ref }}
+        PAGES_URL: ${{ inputs.pages-url }}
+        EVENT_NAME: ${{ github.event_name }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      run: |
+        slug() { echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's#[^a-z0-9._-]+#-#g; s#^-+|-+$##g' | cut -c1-80; }
+        branch="${HEAD_REF:-$REF_NAME}"
+        branch_slug="$(slug "$branch")"
+        base_slug=""
+        [ -n "$BASE_REF" ] && base_slug="$(slug "$BASE_REF")"
+        owner="${GITHUB_REPOSITORY%%/*}"; repo="${GITHUB_REPOSITORY#*/}"
+        owner_lc="$(echo "$owner" | tr '[:upper:]' '[:lower:]')"
+        if [ -n "$PAGES_URL" ]; then base="${PAGES_URL%/}"
+        elif [ "$(echo "$repo" | tr '[:upper:]' '[:lower:]')" = "${owner_lc}.github.io" ]; then base="https://${owner_lc}.github.io"
+        else base="https://${owner_lc}.github.io/${repo}"; fi
+        fork=false
+        if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then fork=true; fi
+        {
+          echo "branch-slug=$branch_slug"
+          echo "base-slug=$base_slug"
+          echo "run-path=$branch_slug/$GITHUB_RUN_NUMBER"
+          echo "report-url=$base/$branch_slug/$GITHUB_RUN_NUMBER/"
+          echo "latest-url=$base/$branch_slug/latest/"
+          echo "fork=$fork"
+          echo "history=$RUNNER_TEMP/spectra-history.json"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Fetch history from ${{ inputs.pages-branch }}
+      shell: bash
+      env:
+        PAGES_BRANCH: ${{ inputs.pages-branch }}
+        BRANCH_SLUG: ${{ steps.meta.outputs.branch-slug }}
+        BASE_SLUG: ${{ steps.meta.outputs.base-slug }}
+        HISTORY: ${{ steps.meta.outputs.history }}
+        TOKEN: ${{ inputs.github-token }}
+      run: |
+        rm -f "$HISTORY"
+        remote="${SPECTRA_PAGES_REMOTE:-https://x-access-token:${TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git}"
+        tmp="$RUNNER_TEMP/spectra-pages-read"
+        rm -rf "$tmp"
+        if git clone --quiet --depth 1 --branch "$PAGES_BRANCH" --single-branch "$remote" "$tmp" 2>/dev/null; then
+          if [ -f "$tmp/$BRANCH_SLUG/history.json" ]; then cp "$tmp/$BRANCH_SLUG/history.json" "$HISTORY"; echo "History: $BRANCH_SLUG"
+          elif [ -n "$BASE_SLUG" ] && [ -f "$tmp/$BASE_SLUG/history.json" ]; then cp "$tmp/$BASE_SLUG/history.json" "$HISTORY"; echo "History: base branch $BASE_SLUG"
+          else echo "No history yet for $BRANCH_SLUG"; fi
+        else
+          echo "No $PAGES_BRANCH branch yet; this is the first report."
+        fi
+        rm -rf "$tmp"
+
+    - name: Generate report
+      id: generate
+      shell: bash
+      env:
+        RESULTS_DIR: ${{ inputs.results-dir }}
+        JUNIT: ${{ inputs.junit }}
+        REPORT_DIR: ${{ inputs.report-dir }}
+        RUN_NAME: ${{ inputs.run-name }}
+        HISTORY: ${{ steps.meta.outputs.history }}
+        REPORT_URL: ${{ inputs.publish == 'true' && steps.meta.outputs.fork != 'true' && steps.meta.outputs.report-url || '' }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        SPECTRA_AI_PROVIDER: ${{ inputs.ai-provider }}
+        SPECTRA_AI_MODEL: ${{ inputs.ai-model }}
+        SPECTRA_AI_BASE_URL: ${{ inputs.ai-base-url }}
+        SPECTRA_AI_MAX_CLUSTERS: ${{ inputs.ai-max-groups }}
+      run: |
+        args=(generate -o "$REPORT_DIR" --history "$HISTORY" --history-out "$REPORT_DIR/history.json")
+        found=0
+        for d in $RESULTS_DIR; do if [ -f "$d/run.json" ]; then args+=(-r "$d"); found=1; else echo "::warning::Spectra: $d/run.json not found"; fi; done
+        for f in $JUNIT; do if [ -f "$f" ]; then args+=(-j "$f"); found=1; else echo "::warning::Spectra: $f not found"; fi; done
+        if [ "$found" = 0 ]; then echo "::error::Spectra: no test results found. Add the reporter to playwright.config.ts or pass junit."; exit 1; fi
+        [ -n "$REPORT_URL" ] && args+=(--report-url "$REPORT_URL")
+        [ -n "$RUN_NAME" ] && args+=(--name "$RUN_NAME")
+        node "$GITHUB_ACTION_PATH/dist/src/cli.js" "${args[@]}"
+
+    - name: Job summary
+      if: inputs.job-summary == 'true'
+      shell: bash
+      env:
+        REPORT_DIR: ${{ inputs.report-dir }}
+      run: cat "$REPORT_DIR/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Publish to GitHub Pages
+      if: inputs.publish == 'true' && steps.meta.outputs.fork != 'true'
+      shell: bash
+      env:
+        PAGES_BRANCH: ${{ inputs.pages-branch }}
+        REPORT_DIR: ${{ inputs.report-dir }}
+        BRANCH_SLUG: ${{ steps.meta.outputs.branch-slug }}
+        KEEP: ${{ inputs.keep-runs }}
+        TOKEN: ${{ inputs.github-token }}
+        REPORT_URL: ${{ steps.meta.outputs.report-url }}
+      run: |
+        set -euo pipefail
+        report="$(cd "$REPORT_DIR" && pwd)"
+        remote="${SPECTRA_PAGES_REMOTE:-https://x-access-token:${TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git}"
+        site="$RUNNER_TEMP/spectra-pages"
+        for attempt in 1 2 3; do
+          rm -rf "$site"
+          if git clone --quiet --depth 1 --branch "$PAGES_BRANCH" --single-branch "$remote" "$site" 2>/dev/null; then :; else
+            mkdir -p "$site" && cd "$site" && git init --quiet && git checkout --quiet --orphan "$PAGES_BRANCH" && git remote add origin "$remote"
+          fi
+          cd "$site"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          touch .nojekyll
+          mkdir -p "$BRANCH_SLUG"
+          rm -rf "$BRANCH_SLUG/$GITHUB_RUN_NUMBER" "$BRANCH_SLUG/latest"
+          mkdir -p "$BRANCH_SLUG/$GITHUB_RUN_NUMBER"
+          cp -R "$report/." "$BRANCH_SLUG/$GITHUB_RUN_NUMBER/"
+          rm -f "$BRANCH_SLUG/$GITHUB_RUN_NUMBER/history.json"
+          cp -R "$BRANCH_SLUG/$GITHUB_RUN_NUMBER" "$BRANCH_SLUG/latest"
+          cp "$report/history.json" "$BRANCH_SLUG/history.json"
+          # prune old runs
+          runs="$(ls -1 "$BRANCH_SLUG" | grep -E '^[0-9]+$' | sort -n || true)"
+          count="$(printf '%s\n' "$runs" | grep -c . || true)"
+          if [ "$count" -gt "$KEEP" ]; then
+            printf '%s\n' "$runs" | head -n "$((count - KEEP))" | while read -r old; do rm -rf "${BRANCH_SLUG:?}/$old"; done
+          fi
+          # root index: list of branches
+          {
+            echo '<!DOCTYPE html><meta charset="utf-8"><title>Spectra reports</title><style>body{font:15px system-ui;max-width:640px;margin:40px auto;padding:0 20px}a{display:block;padding:8px 0}</style><h1>Spectra reports</h1>'
+            for d in */; do d="${d%/}"; if [ -f "$d/latest/index.html" ]; then echo "<a href=\"$d/latest/\">$d</a>"; fi; done
+          } > index.html
+          git add -A
+          git commit --quiet -m "Spectra report: $BRANCH_SLUG #$GITHUB_RUN_NUMBER" || { echo "Nothing to publish"; break; }
+          if git push --quiet origin "$PAGES_BRANCH"; then echo "Published: $REPORT_URL"; break; fi
+          cd "$RUNNER_TEMP"
+          if [ "$attempt" = 3 ]; then echo "::error::Spectra: could not push to $PAGES_BRANCH"; exit 1; fi
+          echo "Push conflict (attempt $attempt); retrying"
+          sleep $((attempt * 3))
+        done
+        echo "### 📊 [Open the Spectra report]($REPORT_URL)" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Comment on pull request
+      if: inputs.comment-on-pr == 'true' && github.event_name == 'pull_request' && steps.meta.outputs.fork != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+        REPORT_DIR: ${{ inputs.report-dir }}
+      run: |
+        marker='<!-- spectra-report -->'
+        id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n 1)"
+        if [ -n "$id" ]; then
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$REPORT_DIR/summary.md" --silent && echo "Updated comment $id"
+        else
+          gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@"$REPORT_DIR/summary.md" --silent && echo "Created comment"
+        fi
+
+    - name: Fail on test failures
+      if: inputs.fail-on-failure == 'true' && steps.generate.outputs.failed != '0'
+      shell: bash
+      run: |
+        echo "::error::${{ steps.generate.outputs.failed }} test(s) failed"
+        exit 1

@@ -1,0 +1,10 @@
+node_modules/
+spectra-results/
+spectra-report/
+demo-report/
+.demo-work/
+test-results/
+playwright-report/
+*.log
+.DS_Store
+dist/test/

@@ -1,0 +1,67 @@
+{
+  "name": "spectra-report",
+  "version": "0.1.0",
+  "description": "AI-assisted test reports for Playwright: failures grouped by root cause, published to GitHub Pages with a PR comment.",
+  "license": "MIT",
+  "author": "Suresh Babu (https://github.com/surkuar)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/surkuar/spectra-report.git"
+  },
+  "homepage": "https://github.com/surkuar/spectra-report#readme",
+  "bugs": "https://github.com/surkuar/spectra-report/issues",
+  "keywords": [
+    "playwright",
+    "reporter",
+    "test-report",
+    "allure",
+    "github-pages",
+    "github-action",
+    "ai",
+    "flaky-tests"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "bin": {
+    "spectra": "dist/src/cli.js"
+  },
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./playwright": {
+      "types": "./dist/src/playwright.d.ts",
+      "default": "./dist/src/playwright.js"
+    }
+  },
+  "files": [
+    "dist/src",
+    "viewer",
+    "action.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "demo": "npm run build && node scripts/demo.mjs"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.42"
+  },
+  "peerDependenciesMeta": {
+    "@playwright/test": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

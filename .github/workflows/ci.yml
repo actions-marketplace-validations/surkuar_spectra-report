@@ -1,0 +1,44 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: spectra-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+      - name: dist/ is up to date
+        run: |
+          npm run build
+          git diff --exit-code -- dist/src || { echo "::error::Run npm run build and commit dist/"; exit 1; }
+
+      # Dogfood: run the demo Playwright suite and report it with this repo's own Action.
+      - name: Demo suite
+        working-directory: examples/demo
+        env:
+          SPECTRA_REPORTER: ${{ github.workspace }}/dist/src/playwright.js
+          SPECTRA_RESULTS_DIR: ${{ github.workspace }}/spectra-results
+        run: npx playwright test || true
+      - name: Spectra Report (this repo's Action)
+        if: always()
+        uses: ./
+        with:
+          run-name: Spectra demo suite
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
