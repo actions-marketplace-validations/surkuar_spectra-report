@@ -6,6 +6,7 @@ const run = promisify(execFile);
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import http from 'node:http';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -49,6 +50,8 @@ if (process.argv.includes('--mock-ai')) {
   await new Promise((r) => mock.listen(0, '127.0.0.1', r));
   Object.assign(aiEnv, { SPECTRA_AI_PROVIDER: 'anthropic', SPECTRA_AI_API_KEY: 'demo', SPECTRA_AI_MODEL: 'sample AI output (demo)', SPECTRA_AI_BASE_URL: `http://127.0.0.1:${mock.address().port}` });
 }
+const require = createRequire(import.meta.url);
+const playwrightCli = path.join(path.dirname(require.resolve('@playwright/test/package.json')), 'cli.js');
 let history;
 for (const [i, demoRun] of sequence.entries()) {
   const results = path.join(work, `results-${i}`);
@@ -66,11 +69,20 @@ for (const [i, demoRun] of sequence.entries()) {
     GITHUB_SERVER_URL: 'https://github.com',
     CI: '1',
   };
+  // Run Playwright's CLI through Node directly: works on Windows, macOS and Linux
+  // (npx is npx.cmd on Windows and cannot be started without a shell).
+  let pwOutput = '';
   try {
-    await run('npx', ['playwright', 'test', '--reporter', `${env.SPECTRA_REPORTER}`], { cwd: demo, env });
-  } catch {
-    /* failing tests exit non-zero; that's the point */
+    const r = await run(process.execPath, [playwrightCli, 'test', '--reporter', env.SPECTRA_REPORTER], { cwd: demo, env, maxBuffer: 32 * 1024 * 1024 });
+    pwOutput = r.stdout + r.stderr;
+  } catch (e) {
+    pwOutput = `${e.stdout ?? ''}${e.stderr ?? ''}${e.message ?? ''}`; // failing tests exit non-zero; that's expected
   }
+  if (!fs.existsSync(path.join(results, 'run.json'))) {
+    console.error(`Playwright did not produce ${path.join(results, 'run.json')}. Playwright output:\n${pwOutput}`);
+    process.exit(1);
+  }
+  console.error(`run ${i + 1}/${sequence.length}: Playwright finished (DEMO_RUN=${demoRun})`);
   const isLast = i === sequence.length - 1;
   const dir = isLast ? out : path.join(work, `report-${i}`);
   const args = [path.join(root, 'dist', 'src', 'cli.js'), 'generate', '-r', results, '-o', dir, '--name', 'Acme Shop e2e'];
