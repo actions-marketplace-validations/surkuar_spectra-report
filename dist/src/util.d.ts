@@ -1,5 +1,5 @@
 import type { CiInfo, Stats, TestCase } from './types.js';
-export declare const VERSION = "0.1.0";
+export declare const VERSION = "0.1.1";
 export declare function sha1(input: string | Buffer): string;
 /** Stable test id from project, file and title path. */
 export declare function testId(project: string | undefined, file: string, titlePath: string[]): string;
