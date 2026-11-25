@@ -1,4 +1,4 @@
-name: 'Spectra Report'
+name: 'Spectra Playwright Report'
 description: 'AI-assisted Playwright test report: failure groups with root-cause hints, published to GitHub Pages with a sticky PR comment.'
 author: 'Suresh Babu (surkuar)'
 branding:
