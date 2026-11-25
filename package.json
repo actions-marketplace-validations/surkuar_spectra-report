@@ -1,6 +1,6 @@
 {
   "name": "spectra-report",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AI-assisted test reports for Playwright: failures grouped by root cause, published to GitHub Pages with a PR comment.",
   "license": "MIT",
   "author": "Suresh Babu (https://github.com/surkuar)",

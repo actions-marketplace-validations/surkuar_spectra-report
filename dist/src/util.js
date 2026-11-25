@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-export const VERSION = '0.1.0';
+export const VERSION = '0.1.1';
 export function sha1(input) {
     return createHash('sha1').update(input).digest('hex');
 }
