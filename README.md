@@ -1,5 +1,8 @@
 # Spectra Report
 
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Spectra%20Playwright%20Report-7c3aed?logo=github)](https://github.com/marketplace/actions/spectra-playwright-report)
+[![CI](https://github.com/surkuar/spectra-report/actions/workflows/ci.yml/badge.svg)](https://github.com/surkuar/spectra-report/actions/workflows/ci.yml)
+
 **Playwright test reports that tell you *why* tests failed, not just *which* ones.**
 
 Spectra groups failures by root cause, adds an AI hint with the likely cause and a suggested fix for each group, and publishes a fast static report to GitHub Pages. On pull requests it posts one sticky comment that separates new failures from known ones.
@@ -43,6 +46,8 @@ export default defineConfig({
 ```
 
 ### 2. Add the Action
+
+The Action is on the GitHub Marketplace as [Spectra Playwright Report](https://github.com/marketplace/actions/spectra-playwright-report). Use it as `surkuar/spectra-report@v0`:
 
 ```yaml
 # .github/workflows/e2e.yml
