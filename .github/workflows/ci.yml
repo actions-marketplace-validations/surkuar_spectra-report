@@ -4,17 +4,70 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege by default; only the dogfood job can write (gh-pages, PR comment).
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: spectra-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  test:
+  lint:
+    name: Lint workflows
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        run: |
+          bash <(curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color
+
+  test:
+    name: Test (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [20]
+        include:
+          # Oldest supported (package.json engines) and newest LTS, on Linux only.
+          - os: ubuntu-latest
+            node: 18
+          - os: ubuntu-latest
+            node: 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: Unit tests (builds first)
+        run: npm test
+      - name: dist/ is up to date
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          git diff --exit-code -- dist/src || { echo "::error::dist/ is stale: run npm run build and commit dist/"; exit 1; }
+      # End to end: six simulated runs with history and canned AI answers, no API key needed.
+      - name: Demo report (end to end)
+        shell: bash
+        run: |
+          npm run demo -- --mock-ai
+          test -s demo-report/index.html || { echo "::error::Demo did not produce demo-report/index.html"; exit 1; }
+
+  dogfood:
+    name: Dogfood (report this repo with its own Action)
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,20 +75,16 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - name: Unit tests
-        run: npm test
-      - name: dist/ is up to date
-        run: |
-          npm run build
-          git diff --exit-code -- dist/src || { echo "::error::Run npm run build and commit dist/"; exit 1; }
-
-      # Dogfood: run the demo Playwright suite and report it with this repo's own Action.
+      - run: npm run build
       - name: Demo suite
         working-directory: examples/demo
         env:
           SPECTRA_REPORTER: ${{ github.workspace }}/dist/src/playwright.js
           SPECTRA_RESULTS_DIR: ${{ github.workspace }}/spectra-results
-        run: npx playwright test || true
+        # The demo suite fails on purpose; fail the step only if the reporter wrote nothing.
+        run: |
+          npx playwright test || true
+          test -s "$SPECTRA_RESULTS_DIR/run.json" || { echo "::error::Reporter did not write run.json"; exit 1; }
       - name: Spectra Report (this repo's Action)
         if: always()
         uses: ./
